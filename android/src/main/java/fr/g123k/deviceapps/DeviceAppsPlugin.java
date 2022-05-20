@@ -37,6 +37,7 @@ import io.flutter.plugin.common.MethodChannel.Result;
 
 import static fr.g123k.deviceapps.utils.Base64Utils.encodeToBase64;
 import static fr.g123k.deviceapps.utils.DrawableUtils.getBitmapFromDrawable;
+import static fr.g123k.deviceapps.utils.DrawableUtils.isAdaptiveIcon;
 
 /**
  * DeviceAppsPlugin
@@ -270,6 +271,7 @@ public class DeviceAppsPlugin implements
                 Drawable icon = packageManager.getApplicationIcon(pInfo.packageName);
                 String encodedImage = encodeToBase64(getBitmapFromDrawable(icon), Bitmap.CompressFormat.PNG, 100);
                 map.put(AppDataConstants.APP_ICON, encodedImage);
+                map.put(AppDataConstants.IS_ICON_ADAPTIVE, isAdaptiveIcon(icon));
             } catch (PackageManager.NameNotFoundException ignored) {
             }
         }

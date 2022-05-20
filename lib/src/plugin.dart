@@ -348,10 +348,14 @@ class Application extends _BaseApplication {
 /// Image.memory(app.icon)
 /// ```
 class ApplicationWithIcon extends Application {
+  /// Whether or not the icon is an AdaptiveIcon
+  final bool isIconAdaptive;
+
   final String _icon;
 
   ApplicationWithIcon._fromMap(Map<dynamic, dynamic> map)
       : _icon = map['app_icon'] as String,
+        isIconAdaptive = map['is_icon_adaptive'] as bool,
         super._fromMap(map);
 
   /// Icon of the application to use in conjunction with [Image.memory]
