@@ -8,6 +8,12 @@ import 'package:flutter/services.dart';
 import 'model/application_category.dart';
 import 'model/application_event.dart';
 
+enum ApplicationState {
+  all,
+  running,
+  stopped,
+}
+
 /// Plugin to list applications installed on an Android device
 /// iOS is not supported
 class DeviceApps {
@@ -28,13 +34,18 @@ class DeviceApps {
     bool includeSystemApps: false,
     bool includeAppIcons: false,
     bool onlyAppsWithLaunchIntent: false,
+    ApplicationState runningApps: ApplicationState.all,
   }) async {
     try {
       final Object apps =
           await _methodChannel.invokeMethod('getInstalledApps', <String, bool>{
         'system_apps': includeSystemApps,
         'include_app_icons': includeAppIcons,
-        'only_apps_with_launch_intent': onlyAppsWithLaunchIntent
+        'only_apps_with_launch_intent': onlyAppsWithLaunchIntent,
+        'running_apps': runningApps == ApplicationState.all ||
+            runningApps == ApplicationState.running,
+        'stopped_apps': runningApps == ApplicationState.all ||
+            runningApps == ApplicationState.stopped,
       });
 
       if (apps is Iterable) {
@@ -159,6 +170,21 @@ class DeviceApps {
         .catchError((dynamic err) => false);
   }
 
+  /// Kill an application by its [packageName]
+  /// Requires android.permission.KILL_BACKGROUND_PROCESSES
+  static Future<bool> killApp(String packageName) {
+    if (packageName.isEmpty) {
+      throw Exception('The package name can not be empty');
+    }
+
+    return _methodChannel
+        .invokeMethod<bool>('killApp', <String, String>{
+          'package_name': packageName,
+        })
+        .then((bool? value) => value ?? false)
+        .catchError((dynamic err) => false);
+  }
+
   /// Listen to app changes: installations, uninstallations, updates, enabled or
   /// disabled. As it is a [Stream], don't hesite to filter data if the content
   /// is too verbose for you
@@ -219,6 +245,9 @@ class Application extends _BaseApplication {
   /// or disabled (installed, but not visible)
   final bool enabled;
 
+  /// Whether the app is in a stopped state
+  final bool isStopped;
+
   factory Application._(Map<dynamic, dynamic> map) {
     if (map.length == 0) {
       throw Exception('The map can not be null!');
@@ -240,6 +269,7 @@ class Application extends _BaseApplication {
         installTimeMillis = map['install_time'] as int,
         updateTimeMillis = map['update_time'] as int,
         enabled = map['is_enabled'] as bool,
+        isStopped = map['is_stopped'] as bool,
         category = _parseCategory(map['category']),
         super._fromMap(map);
 
@@ -277,6 +307,12 @@ class Application extends _BaseApplication {
     return DeviceApps.openApp(packageName);
   }
 
+  /// Kill the application
+  /// Requires android.permission.KILL_BACKGROUND_PROCESSES
+  Future<bool> killApp() {
+    return DeviceApps.killApp(packageName);
+  }
+
   // Open the app settings screen
   // Will return [true] is the app is installed and the screen visible
   // Will return [false] otherwise
@@ -304,7 +340,8 @@ class Application extends _BaseApplication {
         'installTimeMillis: $installTimeMillis, '
         'updateTimeMillis: $updateTimeMillis, '
         'category: $category, '
-        'enabled: $enabled'
+        'enabled: $enabled, '
+        'isStopped: $isStopped'
         '}';
   }
 
@@ -323,7 +360,8 @@ class Application extends _BaseApplication {
           installTimeMillis == other.installTimeMillis &&
           updateTimeMillis == other.updateTimeMillis &&
           category == other.category &&
-          enabled == other.enabled;
+          enabled == other.enabled &&
+          isStopped == other.isStopped;
 
   @override
   int get hashCode =>
@@ -337,7 +375,8 @@ class Application extends _BaseApplication {
       installTimeMillis.hashCode ^
       updateTimeMillis.hashCode ^
       category.hashCode ^
-      enabled.hashCode;
+      enabled.hashCode ^
+      isStopped.hashCode;
 }
 
 /// If the [includeAppIcons] attribute is provided, this class will be used.
@@ -367,10 +406,11 @@ class ApplicationWithIcon extends Application {
       super == other &&
           other is ApplicationWithIcon &&
           runtimeType == other.runtimeType &&
-          _icon == other._icon;
+          _icon == other._icon &&
+          isIconAdaptive == other.isIconAdaptive;
 
   @override
-  int get hashCode => super.hashCode ^ _icon.hashCode;
+  int get hashCode => super.hashCode ^ _icon.hashCode ^ isIconAdaptive.hashCode;
 }
 
 /// Represent an event relative to an application, which can be:

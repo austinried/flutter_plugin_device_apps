@@ -1,5 +1,7 @@
 package fr.g123k.deviceapps;
 
+import android.annotation.SuppressLint;
+import android.app.ActivityManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ApplicationInfo;
@@ -84,7 +86,9 @@ public class DeviceAppsPlugin implements
                 boolean systemApps = call.hasArgument("system_apps") && (Boolean) (call.argument("system_apps"));
                 boolean includeAppIcons = call.hasArgument("include_app_icons") && (Boolean) (call.argument("include_app_icons"));
                 boolean onlyAppsWithLaunchIntent = call.hasArgument("only_apps_with_launch_intent") && (Boolean) (call.argument("only_apps_with_launch_intent"));
-                fetchInstalledApps(systemApps, includeAppIcons, onlyAppsWithLaunchIntent, new InstalledAppsCallback() {
+                boolean runningApps = call.hasArgument("running_apps") && (Boolean) (call.argument("running_apps"));
+                boolean stoppedApps = call.hasArgument("stopped_apps") && (Boolean) (call.argument("stopped_apps"));
+                fetchInstalledApps(systemApps, includeAppIcons, onlyAppsWithLaunchIntent, runningApps, stoppedApps, new InstalledAppsCallback() {
                     @Override
                     public void onInstalledAppsListAvailable(final List<Map<String, Object>> apps) {
                         new Handler(Looper.getMainLooper()).post(new Runnable() {
@@ -129,6 +133,14 @@ public class DeviceAppsPlugin implements
                     result.success(openAppSettings(packageName));
                 }
                 break;
+            case "killApp":
+                if (!call.hasArgument("package_name") || TextUtils.isEmpty(call.argument("package_name").toString())) {
+                    result.error("ERROR", "Empty or null package name", null);
+                } else {
+                    String packageName = call.argument("package_name").toString();
+                    result.success(killApp(packageName));
+                }
+                break;
             case "uninstallApp":
                 if (!call.hasArgument("package_name") || TextUtils.isEmpty(call.argument("package_name").toString())) {
                     result.error("ERROR", "Empty or null package name", null);
@@ -142,12 +154,12 @@ public class DeviceAppsPlugin implements
         }
     }
 
-    private void fetchInstalledApps(final boolean includeSystemApps, final boolean includeAppIcons, final boolean onlyAppsWithLaunchIntent, final InstalledAppsCallback callback) {
+    private void fetchInstalledApps(final boolean includeSystemApps, final boolean includeAppIcons, final boolean onlyAppsWithLaunchIntent, final boolean runningApps, final boolean stoppedApps, final InstalledAppsCallback callback) {
         asyncWork.run(new Runnable() {
 
             @Override
             public void run() {
-                List<Map<String, Object>> installedApps = getInstalledApps(includeSystemApps, includeAppIcons, onlyAppsWithLaunchIntent);
+                List<Map<String, Object>> installedApps = getInstalledApps(includeSystemApps, includeAppIcons, onlyAppsWithLaunchIntent, runningApps, stoppedApps);
 
                 if (callback != null) {
                     callback.onInstalledAppsListAvailable(installedApps);
@@ -157,7 +169,7 @@ public class DeviceAppsPlugin implements
         });
     }
 
-    private List<Map<String, Object>> getInstalledApps(boolean includeSystemApps, boolean includeAppIcons, boolean onlyAppsWithLaunchIntent) {
+    private List<Map<String, Object>> getInstalledApps(boolean includeSystemApps, boolean includeAppIcons, boolean onlyAppsWithLaunchIntent, boolean runningApps, boolean stoppedApps) {
         if (context == null) {
             Log.e(LOG_TAG, "Context is null");
             return new ArrayList<>(0);
@@ -174,10 +186,15 @@ public class DeviceAppsPlugin implements
             if (onlyAppsWithLaunchIntent && packageManager.getLaunchIntentForPackage(packageInfo.packageName) == null) {
                 continue;
             }
+            if (!runningApps && !isStopped(packageInfo)) {
+                continue;
+            }
+            if (!stoppedApps && isStopped(packageInfo)) {
+                continue;
+            }
 
             Map<String, Object> map = getAppData(packageManager,
                     packageInfo,
-                    packageInfo.applicationInfo,
                     includeAppIcons);
             installedApps.add(map);
         }
@@ -219,8 +236,25 @@ public class DeviceAppsPlugin implements
         return false;
     }
 
-    private boolean isSystemApp(PackageInfo pInfo) {
+    @SuppressLint("MissingPermission")
+    private boolean killApp(@NonNull String packageName) {
+        if (!isAppInstalled(packageName)) {
+            Log.w(LOG_TAG, "Application with package name \"" + packageName + "\" is not installed on this device");
+            return false;
+        }
+
+        ActivityManager activityManager = (ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE);
+        activityManager.killBackgroundProcesses(packageName);
+
+        return true;
+    }
+
+    private static boolean isSystemApp(PackageInfo pInfo) {
         return (pInfo.applicationInfo.flags & SYSTEM_APP_MASK) != 0;
+    }
+
+    private static boolean isStopped(PackageInfo pInfo) {
+        return (pInfo.applicationInfo.flags & ApplicationInfo.FLAG_STOPPED) != 0;
     }
 
     private boolean isAppInstalled(@NonNull String packageName) {
@@ -239,7 +273,6 @@ public class DeviceAppsPlugin implements
 
             return getAppData(packageManager,
                     packageInfo,
-                    packageInfo.applicationInfo,
                     includeAppIcon);
         } catch (PackageManager.NameNotFoundException ignored) {
             return null;
@@ -248,19 +281,19 @@ public class DeviceAppsPlugin implements
 
     private Map<String, Object> getAppData(PackageManager packageManager,
                                            PackageInfo pInfo,
-                                           ApplicationInfo applicationInfo,
                                            boolean includeAppIcon) {
         Map<String, Object> map = new HashMap<>();
         map.put(AppDataConstants.APP_NAME, pInfo.applicationInfo.loadLabel(packageManager).toString());
-        map.put(AppDataConstants.APK_FILE_PATH, applicationInfo.sourceDir);
+        map.put(AppDataConstants.APK_FILE_PATH, pInfo.applicationInfo.sourceDir);
         map.put(AppDataConstants.PACKAGE_NAME, pInfo.packageName);
         map.put(AppDataConstants.VERSION_CODE, pInfo.versionCode);
         map.put(AppDataConstants.VERSION_NAME, pInfo.versionName);
-        map.put(AppDataConstants.DATA_DIR, applicationInfo.dataDir);
+        map.put(AppDataConstants.DATA_DIR, pInfo.applicationInfo.dataDir);
         map.put(AppDataConstants.SYSTEM_APP, isSystemApp(pInfo));
         map.put(AppDataConstants.INSTALL_TIME, pInfo.firstInstallTime);
         map.put(AppDataConstants.UPDATE_TIME, pInfo.lastUpdateTime);
-        map.put(AppDataConstants.IS_ENABLED, applicationInfo.enabled);
+        map.put(AppDataConstants.IS_ENABLED, pInfo.applicationInfo.enabled);
+        map.put(AppDataConstants.IS_STOPPED, isStopped(pInfo));
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             map.put(AppDataConstants.CATEGORY, pInfo.applicationInfo.category);
